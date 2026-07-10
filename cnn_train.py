@@ -1,88 +1,138 @@
-import tensorflow as tf
-from tensorflow.keras.preprocessing.image import ImageDataGenerator
+import torch
+import torch.nn as nn
+import torch.optim as optim
+from torchvision import datasets, transforms
+from torch.utils.data import DataLoader
 
 # ==========================
-# Dataset Path
+# Dataset
 # ==========================
 dataset_path = "PlantVillage"
 
-# ==========================
-# Hyperparameters (FAST)
-# ==========================
-IMAGE_SIZE = (128, 128)      # 224 -> 128 (Fast)
-BATCH_SIZE = 64              # 32 -> 64
-EPOCHS = 5                   # 20 -> 5
+IMAGE_SIZE = 128
+BATCH_SIZE = 64
+EPOCHS = 5
 
-# ==========================
-# Data Generator
-# ==========================
-datagen = ImageDataGenerator(
-    rescale=1./255,
-    validation_split=0.2
+transform = transforms.Compose([
+    transforms.Resize((IMAGE_SIZE, IMAGE_SIZE)),
+    transforms.ToTensor()
+])
+
+dataset = datasets.ImageFolder(
+    dataset_path,
+    transform=transform
 )
 
-# Training Data
-train_data = datagen.flow_from_directory(
-    dataset_path,
-    target_size=IMAGE_SIZE,
+# split
+train_size = int(0.8 * len(dataset))
+val_size = len(dataset) - train_size
+
+train_data, val_data = torch.utils.data.random_split(
+    dataset,
+    [train_size, val_size]
+)
+
+train_loader = DataLoader(
+    train_data,
     batch_size=BATCH_SIZE,
-    class_mode="categorical",
-    subset="training",
     shuffle=True
 )
 
-# Validation Data
-val_data = datagen.flow_from_directory(
-    dataset_path,
-    target_size=IMAGE_SIZE,
-    batch_size=BATCH_SIZE,
-    class_mode="categorical",
-    subset="validation",
-    shuffle=False
+val_loader = DataLoader(
+    val_data,
+    batch_size=BATCH_SIZE
 )
+
 
 # ==========================
-# Simple CNN (FAST)
+# CNN Model
 # ==========================
-model = tf.keras.models.Sequential([
 
-    tf.keras.layers.Input(shape=(128,128,3)),
+class CNN(nn.Module):
+    def __init__(self, classes):
+        super().__init__()
 
-    tf.keras.layers.Conv2D(16, (3,3), activation="relu"),
-    tf.keras.layers.MaxPooling2D(2,2),
+        self.features = nn.Sequential(
+            nn.Conv2d(3,16,3),
+            nn.ReLU(),
+            nn.MaxPool2d(2),
 
-    tf.keras.layers.Conv2D(32, (3,3), activation="relu"),
-    tf.keras.layers.MaxPooling2D(2,2),
+            nn.Conv2d(16,32,3),
+            nn.ReLU(),
+            nn.MaxPool2d(2),
 
-    tf.keras.layers.Conv2D(64, (3,3), activation="relu"),
-    tf.keras.layers.MaxPooling2D(2,2),
+            nn.Conv2d(32,64,3),
+            nn.ReLU(),
+            nn.MaxPool2d(2)
+        )
 
-    tf.keras.layers.Flatten(),
+        self.classifier = nn.Sequential(
+            nn.Flatten(),
+            nn.Linear(64*14*14,128),
+            nn.ReLU(),
+            nn.Dropout(0.3),
+            nn.Linear(128,classes)
+        )
 
-    tf.keras.layers.Dense(128, activation="relu"),
-    tf.keras.layers.Dropout(0.3),
 
-    tf.keras.layers.Dense(train_data.num_classes, activation="softmax")
-])
+    def forward(self,x):
+        x=self.features(x)
+        return self.classifier(x)
 
-# Compile
-model.compile(
-    optimizer="adam",
-    loss="categorical_crossentropy",
-    metrics=["accuracy"]
+
+
+model = CNN(len(dataset.classes))
+
+
+# ==========================
+# Training
+# ==========================
+
+criterion = nn.CrossEntropyLoss()
+
+optimizer = optim.Adam(
+    model.parameters(),
+    lr=0.001
 )
 
-model.summary()
 
-# Train
-history = model.fit(
-    train_data,
-    validation_data=val_data,
-    epochs=EPOCHS
+for epoch in range(EPOCHS):
+
+    model.train()
+
+    total_loss=0
+
+    for images,labels in train_loader:
+
+        optimizer.zero_grad()
+
+        output=model(images)
+
+        loss=criterion(output,labels)
+
+        loss.backward()
+
+        optimizer.step()
+
+        total_loss+=loss.item()
+
+
+    print(
+        f"Epoch {epoch+1}/{EPOCHS}",
+        "Loss:",
+        total_loss
+    )
+
+
+# Save model
+
+torch.save(
+    {
+        "model":model.state_dict(),
+        "classes":dataset.classes
+    },
+    "model.pth"
 )
 
-# Save
-model.save("model.keras")
 
-print("✅ Training Completed")
-print("✅ Model Saved")
+print("✅ PyTorch Model Saved")
